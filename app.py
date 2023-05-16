@@ -11,10 +11,6 @@ account = ig_service.fetch_accounts()
 
 markets = ig_service.search_markets(search_term='nvda')
 
-
-print(account)
-print(markets)
-
 def order(direction, epic, pos_size, order_type, currency):
     try:
         print(f"sending order {order_type} - {direction} {pos_size} {epic}")
