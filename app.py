@@ -5,7 +5,7 @@ from trading_ig import IGService
 
 app = Flask(__name__)
 
-ig_service = IGService(username='fatisy786',password='Images786$',api_key=config.API_KEY_LIVE, acc_type='LIVE')
+ig_service = IGService(username='fatisy123',password='Daniel123$',api_key=config.API_KEY_DEMO, acc_type='DEMO')
 ig_service.create_session()
 account = ig_service.fetch_accounts()
 
