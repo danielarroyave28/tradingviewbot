@@ -1,17 +1,16 @@
 import json, config
 from flask import Flask, request, jsonify, render_template
 from trading_ig import IGService
-
+import traceback
+import pandas as pd
 
 app = Flask(__name__)
 
-ig_service = IGService(username='fatisy123',password='Daniel123$',api_key=config.API_KEY_DEMO, acc_type='DEMO')
+ig_service = IGService(username='fatisy786',password='Images786$', api_key=config.API_KEY_LIVE, acc_type='LIVE')
 ig_service.create_session()
-account = ig_service.fetch_accounts()
 
-markets = ig_service.search_markets(search_term='nvda')
 
-def order(direction, epic, pos_size, order_type, currency):
+def open_trade(direction, epic, pos_size, order_type, currency, stop_level_distance):
     try:
         print(f"sending order {order_type} - {direction} {pos_size} {epic}")
         trade = ig_service.create_open_position(
@@ -19,10 +18,10 @@ def order(direction, epic, pos_size, order_type, currency):
             direction=direction,
             epic=epic,
             expiry='-',
-            guaranteed_stop="false",
+            guaranteed_stop="true",
             limit_distance=None,
             limit_level=None,
-            stop_distance=None,
+            stop_distance=stop_level_distance,
             stop_level=None,
             trailing_stop=None,
             trailing_stop_increment=None,
@@ -37,6 +36,62 @@ def order(direction, epic, pos_size, order_type, currency):
         return False
 
     return trade
+
+
+def check_open_positions(epic):
+    df = ig_service.fetch_open_positions()
+    if not df.empty:
+        is_trade = epic in df['epic'].unique()
+        direction = df.iloc[0]['direction']
+        dealId = df.iloc[0]['dealId']
+
+    else:
+        is_trade = False
+        direction = None
+        dealId = None
+
+    return is_trade, direction, dealId
+
+
+def close_trade(direction, dealId, pos_size, epic):
+    try:
+        print(f"sending closing order {dealId} - {direction} {pos_size} {epic}")
+        trade = ig_service.close_open_position(
+            direction=direction,
+            deal_id=dealId,
+            expiry='-',
+            order_type='MARKET',
+            size=pos_size,
+            epic=None,
+            level=None,
+            quote_id=None
+        )
+    except Exception as e:
+        print("an exception occured - {}".format(e))
+        return False
+
+    return trade
+
+
+def calculate_stoploss_distance(epic, direction):
+    # Consultar el minimo % del stop
+    epic_rules = ig_service.fetch_market_by_epic(epic=epic)
+
+    # extract daily low price and high price (float)
+    low_price = epic_rules['snapshot']['low']
+    high_price = epic_rules['snapshot']['high']
+    # extract minimum stop loss distance in %
+    min_stop_dist = epic_rules['dealingRules']['minControlledRiskStopDistance']['value'] * 1.5
+
+    if direction == 'BUY':
+        stop_level = ((100 - min_stop_dist) * low_price) / 100
+        stop_level_points = (low_price - stop_level) * 100
+
+    elif direction == 'SELL':
+        stop_level = ((100 + min_stop_dist) * high_price) / 100
+        stop_level_points = (stop_level - high_price) * 100
+
+    return stop_level_points
 
 
 @app.route('/')
@@ -63,17 +118,54 @@ def webhook():
     print(epic)
     order_type = data["order_type"]
     currenncy_code = data["currency"]
-    order_response = order(direction=direction, pos_size=pos_size, epic=epic, order_type=order_type, currency=currenncy_code)
 
-    if order_response:
-        return {
-            "code": "success",
-            "message": "order executed"
-        }
+    open_trades, direction_open_trades, dealId = check_open_positions(epic)
+    if open_trades is True:
+        if direction_open_trades == direction:
+            return {
+                "code": "not possible",
+                "message": "trade in same direction"
+            }
+
+        if direction_open_trades != direction:
+            # close the open trade
+            close_trade(direction=direction, dealId=dealId, pos_size=pos_size, epic=epic)
+            # open a new trade according to signal
+            stop_level = calculate_stoploss_distance(epic=epic, direction=direction)
+            order_response = open_trade(direction=direction, pos_size=pos_size, epic=epic, order_type=order_type,
+                                        currency=currenncy_code, stop_level_distance = stop_level)
+
+            # Check if order was succesful
+            if order_response:
+                return {
+                    "code": "success",
+                    "message": "order executed"
+                }
+            else:
+                print("order failed")
+
+                return {
+                    "code": "error",
+                    "message": "order failed"
+                }
+        else:
+            print('Something weird happened!')
+
     else:
-        print("order failed")
+        # prepare a new order calculating stop loss level
+        stop_level = calculate_stoploss_distance(epic=epic, direction=direction)
+        # Create the new order
+        order = open_trade(direction=direction, pos_size=pos_size, epic=epic, order_type=order_type,
+                           currency=currenncy_code, stop_level_distance=stop_level)
+        if order:
+            return {
+                "code": "success",
+                "message": "order executed"
+            }
+        else:
+            print("order failed")
 
-        return {
-            "code": "error",
-            "message": "order failed"
-        }
+            return {
+                "code": "error",
+                "message": "order failed"
+            }
