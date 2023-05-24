@@ -6,14 +6,18 @@ import pandas as pd
 
 app = Flask(__name__)
 
-ig_service = IGService(username='fatisy786',password='Images786$', api_key=config.API_KEY_LIVE, acc_type='LIVE')
-ig_service.create_session()
+#fatisy786
+#Images786$
+def IG_connect():
+    ig_service = IGService(username='fatisy123',password='Daniel123$', api_key=config.API_KEY_DEMO, acc_type='DEMO')
+    ig_service.create_session()
+    return ig_service
 
 
-def open_trade(direction, epic, pos_size, order_type, currency, stop_level_distance):
+def open_trade(direction, epic, pos_size, order_type, currency, stop_level_distance, conn):
     try:
         print(f"sending order {order_type} - {direction} {pos_size} {epic}")
-        trade = ig_service.create_open_position(
+        trade = conn.create_open_position(
             currency_code=currency,
             direction=direction,
             epic=epic,
@@ -38,8 +42,8 @@ def open_trade(direction, epic, pos_size, order_type, currency, stop_level_dista
     return trade
 
 
-def check_open_positions(epic):
-    df = ig_service.fetch_open_positions()
+def check_open_positions(epic, conn):
+    df = conn.fetch_open_positions()
     if not df.empty:
         is_trade = epic in df['epic'].unique()
         direction = df.iloc[0]['direction']
@@ -53,10 +57,10 @@ def check_open_positions(epic):
     return is_trade, direction, dealId
 
 
-def close_trade(direction, dealId, pos_size, epic):
+def close_trade(direction, dealId, pos_size, epic, conn):
     try:
         print(f"sending closing order {dealId} - {direction} {pos_size} {epic}")
-        trade = ig_service.close_open_position(
+        trade = conn.close_open_position(
             direction=direction,
             deal_id=dealId,
             expiry='-',
@@ -73,9 +77,9 @@ def close_trade(direction, dealId, pos_size, epic):
     return trade
 
 
-def calculate_stoploss_distance(epic, direction):
+def calculate_stoploss_distance(epic, direction, conn):
     # Consultar el minimo % del stop
-    epic_rules = ig_service.fetch_market_by_epic(epic=epic)
+    epic_rules = conn.fetch_market_by_epic(epic=epic)
 
     # extract daily low price and high price (float)
     low_price = epic_rules['snapshot']['low']
@@ -119,7 +123,8 @@ def webhook():
     order_type = data["order_type"]
     currenncy_code = data["currency"]
 
-    open_trades, direction_open_trades, dealId = check_open_positions(epic)
+    connection = IG_connect()
+    open_trades, direction_open_trades, dealId = check_open_positions(epic, connection)
     if open_trades is True:
         if direction_open_trades == direction:
             return {
@@ -129,11 +134,11 @@ def webhook():
 
         if direction_open_trades != direction:
             # close the open trade
-            close_trade(direction=direction, dealId=dealId, pos_size=pos_size, epic=epic)
+            close_trade(direction=direction, dealId=dealId, pos_size=pos_size, epic=epic, conn=connection)
             # open a new trade according to signal
-            stop_level = calculate_stoploss_distance(epic=epic, direction=direction)
+            stop_level = calculate_stoploss_distance(epic=epic, direction=direction, conn = connection)
             order_response = open_trade(direction=direction, pos_size=pos_size, epic=epic, order_type=order_type,
-                                        currency=currenncy_code, stop_level_distance = stop_level)
+                                        currency=currenncy_code, stop_level_distance = stop_level, conn=connection)
 
             # Check if order was succesful
             if order_response:
@@ -153,10 +158,10 @@ def webhook():
 
     else:
         # prepare a new order calculating stop loss level
-        stop_level = calculate_stoploss_distance(epic=epic, direction=direction)
+        stop_level = calculate_stoploss_distance(epic=epic, direction=direction, conn=connection)
         # Create the new order
         order = open_trade(direction=direction, pos_size=pos_size, epic=epic, order_type=order_type,
-                           currency=currenncy_code, stop_level_distance=stop_level)
+                           currency=currenncy_code, stop_level_distance=stop_level, conn=connection)
         if order:
             return {
                 "code": "success",
